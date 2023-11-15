@@ -36,6 +36,7 @@ import (
 	"go.etcd.io/etcd/server/v3/embed"
 	"go.etcd.io/etcd/server/v3/etcdserver"
 	"go.etcd.io/etcd/tests/v3/framework/config"
+	"go.etcd.io/etcd/tests/v3/framework/testutils"
 )
 
 const EtcdProcessBasePort = 20000
@@ -173,8 +174,9 @@ type EtcdProcessClusterConfig struct {
 
 	// Removed in v3.6
 
-	Discovery string // v2 discovery
-	EnableV2  bool
+	Discovery              string // v2 discovery
+	EnableV2               bool
+	RaftStateTraceFilename string
 }
 
 func DefaultConfig() *EtcdProcessClusterConfig {
@@ -393,6 +395,8 @@ func InitEtcdProcessCluster(t testing.TB, cfg *EtcdProcessClusterConfig) (*EtcdP
 		cfg.ServerConfig.SnapshotCount = etcdserver.DefaultSnapshotCount
 	}
 
+	cfg.RaftStateTraceFilename = testutils.GetRaftStateTraceFilename(t)
+
 	etcdCfgs := cfg.EtcdAllServerProcessConfigs(t)
 	epc := &EtcdProcessCluster{
 		Cfg:     cfg,
@@ -584,6 +588,10 @@ func (cfg *EtcdProcessClusterConfig) EtcdServerProcessConfig(tb testing.TB, i in
 	if cfg.GoFailEnabled {
 		gofailPort = (i+1)*10000 + 2381
 		envVars["GOFAIL_HTTP"] = fmt.Sprintf("127.0.0.1:%d", gofailPort)
+	}
+
+	if len(cfg.RaftStateTraceFilename) > 0 {
+		envVars[etcdserver.ENV_TRACE_RAFT_STATE] = cfg.RaftStateTraceFilename
 	}
 
 	var execPath string
@@ -946,6 +954,7 @@ func (epc *EtcdProcessCluster) Close() error {
 			err = cerr
 		}
 	}
+	testutils.CompressRaftStateTraceFile(epc.Cfg.RaftStateTraceFilename)
 	epc.lg.Info("closed test cluster.")
 	return err
 }
