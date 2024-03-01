@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"github.com/jonboulle/clockwork"
+	"go.uber.org/zap"
 	"go.uber.org/zap/zaptest"
 
 	pb "go.etcd.io/etcd/api/v3/etcdserverpb"
@@ -44,12 +45,12 @@ func TestPeriodicHourly(t *testing.T) {
 
 	// compaction doesn't happen til 2 hours elapse
 	for i := 0; i < initialIntervals; i++ {
-		rg.Wait(1)
+		waitOneAndLog("rg", rg, fc, tb.lg)
 		fc.Advance(tb.getRetryInterval())
 	}
 
 	// very first compaction
-	a, err := compactable.Wait(1)
+	a, err := waitOneAndLog("compactable", compactable, fc, tb.lg)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -63,11 +64,11 @@ func TestPeriodicHourly(t *testing.T) {
 	for i := 0; i < 3; i++ {
 		// advance one hour, one revision for each interval
 		for j := 0; j < intervalsPerPeriod; j++ {
-			rg.Wait(1)
+			waitOneAndLog("rg", rg, fc, tb.lg)
 			fc.Advance(tb.getRetryInterval())
 		}
 
-		a, err = compactable.Wait(1)
+		a, err = waitOneAndLog("compactable", compactable, fc, tb.lg)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -95,12 +96,12 @@ func TestPeriodicMinutes(t *testing.T) {
 
 	// compaction doesn't happen til 5 minutes elapse
 	for i := 0; i < initialIntervals; i++ {
-		rg.Wait(1)
+		waitOneAndLog("rg", rg, fc, tb.lg)
 		fc.Advance(tb.getRetryInterval())
 	}
 
 	// very first compaction
-	a, err := compactable.Wait(1)
+	a, err := waitOneAndLog("compactable", compactable, fc, tb.lg)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -113,11 +114,11 @@ func TestPeriodicMinutes(t *testing.T) {
 	for i := 0; i < 5; i++ {
 		// advance 5-minute, one revision for each interval
 		for j := 0; j < intervalsPerPeriod; j++ {
-			rg.Wait(1)
+			waitOneAndLog("rg", rg, fc, tb.lg)
 			fc.Advance(tb.getRetryInterval())
 		}
 
-		a, err := compactable.Wait(1)
+		a, err := waitOneAndLog("compactable", compactable, fc, tb.lg)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -143,7 +144,7 @@ func TestPeriodicPause(t *testing.T) {
 
 	// tb will collect 3 hours of revisions but not compact since paused
 	for i := 0; i < n*3; i++ {
-		rg.Wait(1)
+		waitOneAndLog("rg", rg, fc, tb.lg)
 		fc.Advance(tb.getRetryInterval())
 	}
 	// t.revs = [21 22 23 24 25 26 27 28 29 30]
@@ -156,13 +157,13 @@ func TestPeriodicPause(t *testing.T) {
 
 	// tb resumes to being blocked on the clock
 	tb.Resume()
-	rg.Wait(1)
+	waitOneAndLog("rg", rg, fc, tb.lg)
 
 	// unblock clock, will kick off a compaction at T=3h6m by retry
 	fc.Advance(tb.getRetryInterval())
 
 	// T=3h6m
-	a, err := compactable.Wait(1)
+	a, err := waitOneAndLog("compactable", compactable, fc, tb.lg)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -192,12 +193,12 @@ func TestPeriodicSkipRevNotChange(t *testing.T) {
 	for i := 0; i < initialIntervals; i++ {
 		// every time set the same revision with 100
 		rg.SetRev(int64(100))
-		rg.Wait(1)
+		waitOneAndLog("rg", rg, fc, tb.lg)
 		fc.Advance(tb.getRetryInterval())
 	}
 
 	// very first compaction
-	a, err := compactable.Wait(1)
+	a, err := waitOneAndLog("compactable", compactable, fc, tb.lg)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -212,11 +213,11 @@ func TestPeriodicSkipRevNotChange(t *testing.T) {
 	for i := 0; i < 5; i++ {
 		for j := 0; j < intervalsPerPeriod; j++ {
 			rg.SetRev(int64(100))
-			rg.Wait(1)
+			waitOneAndLog("rg", rg, fc, tb.lg)
 			fc.Advance(tb.getRetryInterval())
 		}
 
-		_, err = compactable.Wait(1)
+		_, err = waitOneAndLog("compactable", compactable, fc, tb.lg)
 		if err == nil {
 			t.Fatal(errors.New("should not compact since the revision not change"))
 		}
@@ -224,11 +225,11 @@ func TestPeriodicSkipRevNotChange(t *testing.T) {
 
 	// when revision changed, compaction is normally
 	for i := 0; i < initialIntervals; i++ {
-		rg.Wait(1)
+		waitOneAndLog("rg", rg, fc, tb.lg)
 		fc.Advance(tb.getRetryInterval())
 	}
 
-	a, err = compactable.Wait(1)
+	a, err = waitOneAndLog("compactable", compactable, fc, tb.lg)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -237,4 +238,17 @@ func TestPeriodicSkipRevNotChange(t *testing.T) {
 	if !reflect.DeepEqual(a[0].Params[0], &pb.CompactionRequest{Revision: expectedRevision}) {
 		t.Errorf("compact request = %v, want %v", a[0].Params[0], &pb.CompactionRequest{Revision: expectedRevision})
 	}
+}
+
+func waitOneAndLog(rn string, rg testutil.Recorder, fc clockwork.Clock, lg *zap.Logger) ([]testutil.Action, error) {
+	actions, err := rg.Wait(1)
+	if err != nil {
+		lg.Warn(
+			"timeout in waiting record",
+			zap.String("name", rn),
+			zap.Time("fake time", fc.Now()),
+		)
+	}
+
+	return actions, err
 }
