@@ -348,6 +348,7 @@ func (r *raftNode) start(rh *raftReadyHandler) {
 					notifyc <- struct{}{}
 				}
 
+				time.Sleep(100 * time.Millisecond)
 				r.Advance()
 			case <-r.stopped:
 				return
