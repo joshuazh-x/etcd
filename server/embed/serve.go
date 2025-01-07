@@ -102,6 +102,8 @@ func (sctx *serveCtx) serve(
 ) (err error) {
 	logger := defaultLog.New(io.Discard, "etcdhttp", 0)
 
+	defer close(sctx.serversC)
+
 	select {
 	case <-s.StoppingNotify():
 		return errors.New("server is stopping")
@@ -122,7 +124,7 @@ func (sctx *serveCtx) serve(
 	servLock := v3lock.NewLockServer(v3c)
 
 	// Make sure serversC is closed even if we prematurely exit the function.
-	defer close(sctx.serversC)
+	//defer close(sctx.serversC)
 	var gwmux *gw.ServeMux
 	if s.Cfg.EnableGRPCGateway {
 		// GRPC gateway connects to grpc server via connection provided by grpc dial.

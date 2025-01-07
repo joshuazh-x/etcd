@@ -38,6 +38,8 @@ import (
 	"go.etcd.io/etcd/server/v3/embed"
 	integration2 "go.etcd.io/etcd/tests/v3/framework/integration"
 	"go.etcd.io/etcd/tests/v3/framework/testutils"
+
+	gofail "go.etcd.io/gofail/runtime"
 )
 
 var testTLSInfo = transport.TLSInfo{
@@ -218,4 +220,45 @@ func TestEmbedEtcdAutoCompactionRetentionRetained(t *testing.T) {
 	durationToCompare, _ := time.ParseDuration("2h0m0s")
 	assert.Equal(t, durationToCompare, autoCompactionRetention)
 	e.Close()
+}
+
+func TestEmbedEtcdStopDuringBootstrapping(t *testing.T) {
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+
+		gofail.Enable("beforePublishing", `sleep(3000)`)
+		defer gofail.Disable("beforePublishing")
+
+		cfg := embed.NewConfig()
+		urls := newEmbedURLs(false, 2)
+		setupEmbedCfg(cfg, []url.URL{urls[0]}, []url.URL{urls[1]})
+		cfg.Dir = filepath.Join(t.TempDir(), "embed-etcd")
+
+		e, err := embed.StartEtcd(cfg)
+		require.NoError(t, err)
+		defer e.Close()
+
+		go func() {
+			time.Sleep(time.Second)
+			e.Server.Stop()
+			t.Log("Stopped server during bootstrapping")
+		}()
+
+		select {
+		case <-e.Server.ReadyNotify():
+			t.Log("Server is ready!")
+		case <-e.Server.StopNotify():
+			t.Log("Server is stopped")
+		case <-time.After(20 * time.Second):
+			e.Server.Stop() // trigger a shutdown
+			t.Error("Server took too long to start!")
+		}
+	}()
+
+	select {
+	case <-done:
+	case <-time.After(10 * time.Second):
+		t.Error("timeout in bootstrapping etcd")
+	}
 }
